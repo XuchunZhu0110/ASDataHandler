@@ -1,0 +1,23 @@
+[DEFAULT]
+# Directory to monitor for new alarm files
+# You may use the absolute address for the Automation Studios Output file
+monitoring_dir = ./alarm_files
+
+# Pattern to match alarm files
+file_pattern = Alarms_*.csv
+
+# How often to check for new files (in seconds)
+polling_interval = 10
+
+# Database connection parameters
+db_host = localhost
+db_port = 3306
+db_user = alarm_user
+db_password = password
+db_name = alarm_db
+table_name = alarms
+
+[LOGGING]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = INFO
+log_file = alarm_monitor.log 
