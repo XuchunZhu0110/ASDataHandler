@@ -364,3 +364,11 @@ CREATE TABLE alarms (
 
 如果应用作为 Windows 服务运行，日志文件将位于服务工作目录中。
 
+## TODO
+后续可能的更新：
+使用 NSSM 将 Python 程序设置为 Windows 服务
+优点：
+1. 开机自动启动
+2. 服务崩溃时可自动重启
+3. 无需用户登录即可运行
+4. 可通过 Windows 服务管理界面控制

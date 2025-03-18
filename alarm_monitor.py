@@ -645,13 +645,13 @@ class AlarmMonitor:
             try:
                 # First, verify and repair the Time index to ensure it's working properly
                 try:
-                    # 使用单独的游标执行ANALYZE TABLE并立即获取其结果集
+                    # use execute ANALYZE TABLE and immediately get its result set
                     with self.get_cursor() as analyze_cursor:
                         analyze_cursor.execute(f"ANALYZE TABLE {table_name}")
-                        # 必须获取结果集，避免"Unread result found"错误
+                        # must get the result set, avoid "Unread result found" error
                         analyze_result = analyze_cursor.fetchall()
                     
-                    # 检查索引是否存在
+                    # check if the index exists
                     cursor.execute(f"""
                         SELECT COUNT(*) 
                         FROM information_schema.statistics 
@@ -671,12 +671,12 @@ class AlarmMonitor:
                 unique_alarms = []
                 duplicate_count = 0
                 
-                # 分批检查，避免一次处理太多记录导致性能问题
+                # check in batches, avoid processing too many records at once
                 batch_size = 50
                 for i in range(0, len(alarms), batch_size):
                     batch = alarms[i:i+batch_size]
                     
-                    # 使用IN查询批量检查这一组的记录
+                    # use IN query to check this group of records
                     placeholders = []
                     values = []
                     for alarm in batch:
@@ -697,13 +697,13 @@ class AlarmMonitor:
                         cursor.execute(query, values)
                         existing_records = cursor.fetchall()
                         
-                        # 创建已存在记录的唯一标识集合
+                        # create a unique identifier set for existing records
                         existing_keys = set()
                         for record in existing_records:
                             key = (record[0], record[1], record[2], record[3])  # (Time, Instance, Code, Name)
                             existing_keys.add(key)
                         
-                        # 将不在已存在集合中的记录添加到唯一记录列表
+                        # add records that are not in the existing set to the unique record list
                         for alarm in batch:
                             key = (alarm['Time'], alarm['Instance'], alarm['Code'], alarm['Name'])
                             if key not in existing_keys:
