@@ -1,23 +1,66 @@
 [DEFAULT]
 # Directory to monitor for new alarm files
 # You may use the absolute address for the Automation Studios Output file
-monitoring_dir = ./alarm_files
+monitoring_dir = C:\Users\C01-23299\Desktop\Alarms
+
+# Log file storage path
+# Can be absolute path (e.g., D:/logs/alarm_monitor.log) or relative path (e.g., ./logs/alarm_monitor.log)
+# If only filename is provided, it will be saved in the current working directory
+log_file_path = C:\Users\C01-23299\Desktop\log
 
 # Pattern to match alarm files
 file_pattern = Alarms_*.csv
 
 # How often to check for new files (in seconds)
-polling_interval = 10
+# Polling interval in seconds
+polling_interval = 20          
 
 # Database connection parameters
 db_host = localhost
+# Database port number
 db_port = 3306
-db_user = alarm_user
-db_password = password
+db_user = admin
+db_password = 1357
 db_name = alarm_db
 table_name = alarms
+
+[PERFORMANCE]
+# Batch size for data processing
+batch_size = 2000
+
+# Enable temporary table optimization (true/false)
+enable_temp_table_optimization = true
+
+# Orphaned temp table cleanup interval in seconds (3600 = 1 hour)
+# NOTE: Each data processing creates and immediately deletes its own temp table
+# This setting only cleans up leftover tables from crashed processes
+temp_table_cleanup_interval = 3600
+                                        
+[DATA_MANAGEMENT]
+# Data retention period in months
+data_retention_months = 12    
+
+# Enable automatic data cleanup (true/false)           
+auto_cleanup_enabled = true  
+
+# Cleanup check interval in hours
+cleanup_check_interval = 24       
+
+ # Maximum processing state records to keep(for recovery purpose)
+max_processing_state_records = 100      
+
 
 [LOGGING]
 # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 log_level = INFO
-log_file = alarm_monitor.log 
+
+# Log rotation settings
+# Enable log rotation to prevent log files from becoming too large
+log_rotation_enabled = true
+
+# Maximum file size in MB before rotation
+log_rotation_max_size_mb = 30
+
+# Number of backup log files to keep (older files will be deleted automatically)
+log_rotation_backup_count = 10
+

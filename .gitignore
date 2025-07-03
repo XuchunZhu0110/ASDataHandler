@@ -16,6 +16,7 @@ venv/
 env/
 ENV/
 .env/
+.venv
 
 # Local development settings
 .env
