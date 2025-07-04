@@ -138,9 +138,6 @@ cleanup_check_interval_unit = hours  # 支持的单位：minutes, hours, days
 # 该表用于故障恢复，告知程序哪些文件已经被处理过，哪些处理未成功，从而可以从正确位置进行恢复
 max_processing_state_records = 100
 
-# 测试配置示例（用于功能验证）：
-# data_retention_value = 5
-# data_retention_unit = minutes
 
 [LOGGING]
 # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL

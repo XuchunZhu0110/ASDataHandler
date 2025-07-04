@@ -20,7 +20,7 @@ import mysql.connector
 import logging
 import logging.handlers
 import configparser
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Union
 from contextlib import contextmanager
 
@@ -28,8 +28,110 @@ from contextlib import contextmanager
 from system_recovery import SystemRecoveryManager
 
 
+class TimestampRotatingFileHandler(logging.FileHandler):
+    """Custom log handler that rotates files using timestamp-based naming"""
+    
+    def __init__(self, log_dir, base_name, max_bytes, backup_count, encoding=None):
+        self.log_dir = log_dir
+        self.base_name = base_name
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count    
+        # Clean up old files first to ensure limits are not exceeded
+        self._cleanup_old_files()
+        # Generate initial filename and initialize parent class
+        self.current_filename = self._generate_filename()
+        super().__init__(self.current_filename, encoding=encoding)
+        
+    def _generate_filename(self):
+        """Generate a new filename with current timestamp"""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return os.path.join(self.log_dir, f'{self.base_name}_{timestamp}.log')
+    
+    def _cleanup_old_files(self):
+        """Clean up old log files to maintain backup_count limit"""
+        try:
+            pattern = os.path.join(self.log_dir, f'{self.base_name}_*.log')
+            log_files = glob.glob(pattern)
+            if len(log_files) < self.backup_count:
+                return
+            
+            # Sort by modification time (oldest first for deletion)
+            log_files.sort(key=os.path.getmtime)
+            
+            # Delete excess files to maintain backup_count limit
+            # When rotating: if we have N files and create 1 new, we need to delete (N+1-backup_count) files
+            files_to_delete = len(log_files) - self.backup_count + 1
+            
+            # Delete oldest files
+            deleted_files = []
+            for file_path in log_files[:files_to_delete]:
+                try:
+                    filename = os.path.basename(file_path)
+                    os.remove(file_path)
+                    deleted_files.append(filename)
+                except Exception as e:
+                    print(f"Warning: Could not delete {os.path.basename(file_path)}: {e}")
+            
+            if deleted_files:
+                deleted_count = len(deleted_files)
+                files_list = ", ".join(deleted_files)
+                cleanup_msg = f"Cleaned up {deleted_count} old log files to maintain limit of {self.backup_count}: {files_list}"
+                
+                try:
+                    cleanup_record = logging.LogRecord('AlarmMonitor', logging.INFO, '', 0, cleanup_msg, (), None)
+                    if hasattr(self, 'stream') and self.stream:
+                        super().emit(cleanup_record)
+                    else:
+                        print(cleanup_msg)
+                except:
+                    print(cleanup_msg)
+                
+        except Exception as e:
+            print(f"Warning: Log file cleanup failed: {e}")
+    
+    def _should_rotate(self):
+        """Check if current file should be rotated"""
+        try:
+            return os.path.exists(self.current_filename) and os.path.getsize(self.current_filename) >= self.max_bytes
+        except OSError:
+            return False
+    
+    def _rotate(self):
+        """Rotate to a new file with timestamp"""
+        try:
+            # Close current file
+            if self.stream:
+                self.stream.close()
+                self.stream = None
+            
+            # Clean up old files before creating new one
+            self._cleanup_old_files()
+            
+            # Create new file
+            self.current_filename = self._generate_filename()
+            self.baseFilename = self.current_filename
+            self.stream = self._open()
+            
+            # Log the rotation
+            msg = f'Log rotated to new file: {os.path.basename(self.current_filename)}'
+            rotation_record = logging.LogRecord('AlarmMonitor', logging.INFO, '', 0, msg, (), None)
+            super().emit(rotation_record)
+            
+        except Exception as e:
+            print(f"Error during log rotation: {e}")
+    
+    def emit(self, record):
+        """Emit a log record, rotating if necessary"""
+        try:
+            if self._should_rotate():
+                self._rotate()
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+
+
 def _initialize_logger():
-    """Initialize logger without handlers (will be properly configured in _setup_logging)"""
+    """Initialize logger without handlers (configured in _setup_logging)"""
     logger = logging.getLogger("AlarmMonitor")
     logger.propagate = False
     if logger.handlers:
@@ -849,17 +951,18 @@ class AlarmMonitor:
         # Create file handler with or without rotation
         try:
             if rotation_enabled:
-                # Only support size-based rotation
+                # Use custom timestamp-based rotation
                 max_bytes = rotation_max_size_mb * 1024 * 1024  # Convert MB to bytes
-                file_handler = logging.handlers.RotatingFileHandler(
-                    log_file_path,
-                    maxBytes=max_bytes,
-                    backupCount=rotation_backup_count,
+                file_handler = TimestampRotatingFileHandler(
+                    log_dir,
+                    'alarm_monitor',
+                    max_bytes,
+                    rotation_backup_count,
                     encoding='utf-8'
                 )
-                rotation_info = f"size-based ({rotation_max_size_mb}MB), {rotation_backup_count} backups"
+                rotation_info = f"timestamp-based ({rotation_max_size_mb}MB), {rotation_backup_count} backups"
             else:
-                # No rotation, use standard FileHandler
+                # No rotation, use standard FileHandler with timestamp
                 file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
                 rotation_info = "disabled"
             
@@ -878,8 +981,14 @@ class AlarmMonitor:
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
         
-        logger.info(f"Logging configured: level={log_level_name}, file={os.path.abspath(log_file_path)}, rotation={rotation_info}")
+        # Log configuration info
+        if rotation_enabled:
+            current_log_file = file_handler.current_filename
+            logger.info(f"Logging configured: level={log_level_name}, file={os.path.abspath(current_log_file)}, rotation={rotation_info}")
+        else:
+            logger.info(f"Logging configured: level={log_level_name}, file={os.path.abspath(log_file_path)}, rotation={rotation_info}")
     
+
     def _should_perform_cleanup(self) -> bool:
         """Check if it's time to perform cleanup based on flexible interval configuration"""
         try:
@@ -895,7 +1004,7 @@ class AlarmMonitor:
             # Fallback to 24 hours if configuration is invalid
             time_since_last_cleanup = datetime.now() - self.last_cleanup_time
             return time_since_last_cleanup.total_seconds() >= 24 * 3600
-
+    
     def close(self) -> None:
         """Clean shutdown of monitoring system"""
         self.is_running = False
