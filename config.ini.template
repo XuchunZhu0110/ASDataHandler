@@ -3,9 +3,9 @@
 # You may use the absolute address for the Automation Studios Output file
 monitoring_dir = C:\Users\C01-23299\Desktop\Alarms
 
-# Log file storage path
-# Can be absolute path (e.g., D:/logs/alarm_monitor.log) or relative path (e.g., ./logs/alarm_monitor.log)
-# If only filename is provided, it will be saved in the current working directory
+# Directory to store the log files
+# Can be absolute path (e.g., D:/logs/) or relative path (e.g., ./logs/)
+# Log files will be automatically named with timestamps: alarm_monitor_YYYYMMDD_HHMMSS.log
 log_file_path = C:\Users\C01-23299\Desktop\log
 
 # Pattern to match alarm files
@@ -37,17 +37,21 @@ enable_temp_table_optimization = true
 temp_table_cleanup_interval = 3600
                                         
 [DATA_MANAGEMENT]
-# Data retention period in months
-data_retention_months = 12    
+# Data retention configuration with flexible time units
+data_retention_value = 2
+# Supported units: minutes, hours, days, months
+data_retention_unit = days
 
 # Enable automatic data cleanup (true/false)           
 auto_cleanup_enabled = true  
 
-# Cleanup check interval in hours
-cleanup_check_interval = 24       
+# Cleanup check interval configuration with flexible time units
+cleanup_check_interval_value = 3
+# Supported units: minutes, hours, days
+cleanup_check_interval_unit = minutes
 
- # Maximum processing state records to keep(for recovery purpose)
-max_processing_state_records = 100      
+# Maximum processing state records to keep(for recovery purpose)
+max_processing_state_records = 100
 
 
 [LOGGING]

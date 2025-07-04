@@ -1,7 +1,5 @@
 """
-System Recovery Manager
-
-Handles system recovery, maintenance and database management functionality
+This module handles system recovery, maintenance and database management functionality
 for the Alarm Data Monitor module.
 
 This module provides:
@@ -12,12 +10,9 @@ This module provides:
 - Performance optimization through index management
 """
 
-import os
-import time
 import mysql.connector
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Union, Optional
 
 # Get logger instance (will be configured by main application)
 logger = logging.getLogger("AlarmMonitor")
@@ -97,8 +92,7 @@ class SystemRecoveryManager:
             
             # Clean expired data if enabled
             if self.config.getboolean('DATA_MANAGEMENT', 'auto_cleanup_enabled', fallback=True):
-                retention_months = self.config.getint('DATA_MANAGEMENT', 'data_retention_months', fallback=12)
-                self.cleanup_expired_data(retention_months)
+                self.cleanup_expired_data()  # Use flexible configuration
                 
             logger.debug("Routine maintenance completed")
             
@@ -128,7 +122,6 @@ class SystemRecoveryManager:
                 AdditionalInformation2 VARCHAR(255) {DB_CHARSET},
                 `Change` TEXT {DB_CHARSET} NOT NULL,
                 Message TEXT {DB_CHARSET} NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_time (Time)
             ) {DB_CHARSET}
             """
@@ -190,9 +183,9 @@ class SystemRecoveryManager:
             if cursor.fetchone()[0] == 0:
                 cursor.execute(f"""
                     ALTER TABLE {table_name} 
-                    ADD INDEX idx_cleanup (created_at)
+                    ADD INDEX idx_cleanup (Time)
                 """)
-                logger.info("Created index for data cleanup operations")
+                logger.info("Created index for data cleanup operations based on Time field")
                 
             self.db_connection.commit()
     
@@ -302,22 +295,91 @@ class SystemRecoveryManager:
         # Could include checksum validation, record count verification, etc.
         logger.debug("Data integrity validation completed")
     
-    def cleanup_expired_data(self, retention_months: int) -> None:
-        """Remove alarm data older than retention period"""
+    def cleanup_expired_data(self) -> None:
+        """Remove alarm data older than retention period based on Time field"""
         table_name = self.config['DEFAULT']['table_name']
-        cutoff_date = datetime.now() - timedelta(days=retention_months * 30)
+        
+        # Parse retention configuration with flexible time units
+        retention_value, retention_unit = self._parse_retention_config()
+        cutoff_date = self._calculate_cutoff_date(retention_value, retention_unit)
         
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(f"""
                     DELETE FROM {table_name} 
-                    WHERE created_at < %s
+                    WHERE Time < %s
                 """, (cutoff_date,))
                 
                 deleted_count = cursor.rowcount
                 if deleted_count > 0:
-                    logger.info(f"Cleaned {deleted_count} expired records (older than {retention_months} months)")
+                    logger.info(f"Cleaned {deleted_count} expired records (older than {retention_value} {retention_unit})")
                     self.db_connection.commit()
                     
         except Exception as e:
             logger.error(f"Expired data cleanup failed: {e}") 
+    
+    def _parse_retention_config(self) -> tuple:
+        """Parse data retention configuration with flexible time units"""
+        config = self.config['DATA_MANAGEMENT']
+        
+        # Parse flexible configuration format
+        value = config.getfloat('data_retention_value', 12.0)
+        unit = config.get('data_retention_unit', 'months').lower()
+        
+        # Validate unit
+        if unit not in ['minutes', 'hours', 'days', 'months']:
+            logger.warning(f"Invalid retention unit '{unit}', using 'months'")
+            unit = 'months'
+        
+        return value, unit
+    
+    def _calculate_cutoff_date(self, retention_value: float, retention_unit: str) -> datetime:
+        """Calculate cutoff date based on retention value and unit"""
+        now = datetime.now()  # Use system local time to match CSV Time field
+        
+        unit_map = {
+            'minutes': lambda x: now - timedelta(minutes=x),
+            'hours': lambda x: now - timedelta(hours=x),
+            'days': lambda x: now - timedelta(days=x),
+            'months': lambda x: now - timedelta(days=x * 30) 
+        }
+        
+        if retention_unit not in unit_map:
+            logger.error(f"Unsupported retention unit: {retention_unit}")
+            raise ValueError(f"Unsupported retention unit: {retention_unit}")
+        
+        return unit_map[retention_unit](retention_value)
+    
+    def get_cleanup_interval_seconds(self) -> int:
+        """Get cleanup check interval in seconds with flexible time units"""
+        try:
+            config = self.config['DATA_MANAGEMENT']
+            
+            # Parse cleanup interval configuration
+            interval_value = config.getfloat('cleanup_check_interval_value', 24.0)
+            interval_unit = config.get('cleanup_check_interval_unit', 'hours').lower()
+            
+            # Validate and convert to seconds
+            unit_multipliers = {
+                'minutes': 60,
+                'hours': 3600,
+                'days': 86400
+            }
+            
+            if interval_unit not in unit_multipliers:
+                logger.warning(f"Invalid cleanup interval unit '{interval_unit}', using 'hours'")
+                interval_unit = 'hours'
+            
+            interval_seconds = int(interval_value * unit_multipliers[interval_unit])
+            
+            # Minimum interval: 1 minute
+            if interval_seconds < 60:
+                logger.warning(f"Cleanup interval too short ({interval_seconds}s), using minimum 60s")
+                interval_seconds = 60
+            
+            return interval_seconds
+            
+        except Exception as e:
+            logger.error(f"Error parsing cleanup interval configuration: {e}")
+            # Fallback to 24 hours
+            return 24 * 3600 

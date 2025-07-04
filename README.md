@@ -3,7 +3,6 @@
 ## 核心功能
 
 - **持续监控与处理**: 自动监控指定目录中的 Automation Studio 报警CSV文件，并进行解析和存入数据库。
-- **智能解码**: 可以识别并处理包括 UTF-8 和 GBK 在内文件编码。
 - **数据存储**: 将Alarm数据存入 MySQL 数据库，并通过优化的去重策略确保数据库中的数据唯一性。
 - **系统恢复与维护**:
   - **崩溃恢复**: 能自动恢复因程序意外中断而未完成处理的文件。
@@ -126,22 +125,30 @@ enable_temp_table_optimization = true
 temp_table_cleanup_interval = 3600
 
 [DATA_MANAGEMENT]
-# 数据在数据库保留月数，超过此时长的数据将被自动清理（由alarms数据表的最后一列“created at”字段判定时长），程序自动执行
-data_retention_months = 12
+# 数据保留配置，支持不同时间单位（基于CSV文件中的Time字段判定），程序自动执行
+data_retention_value = 12
+data_retention_unit = months  # 支持的单位：minutes, hours, days, months
+
 # 是否启用自动数据清理（true/false)
 auto_cleanup_enabled = true
-# 自动清理任务的检查周期（小时）
-cleanup_check_interval = 24
+# 自动清理任务的检查周期，支持不同时间单位
+cleanup_check_interval_value = 24
+cleanup_check_interval_unit = hours  # 支持的单位：minutes, hours, days
 # processing_state 表中保留的最大记录数
 # 该表用于故障恢复，告知程序哪些文件已经被处理过，哪些处理未成功，从而可以从正确位置进行恢复
 max_processing_state_records = 100
 
+# 测试配置示例（用于功能验证）：
+# data_retention_value = 5
+# data_retention_unit = minutes
+
 [LOGGING]
 # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
 log_level = INFO
-# 日志文件路径及名称
-# 如开启日志文件自动轮转，则仅需指定存储的目录，程序会对日志文件自动进行命名
-log_file_path = ./logs/alarm_monitor.log
+# 日志文件存储目录
+# 指定日志文件的存储目录，程序会自动生成带时间戳的日志文件
+# 文件名格式：alarm_monitor_YYYYMMDD_HHMMSS.log
+log_file_path = ./logs/
 # 是否启用日志文件自动轮转（基于文件大小）
 log_rotation_enabled = true
 # 单个日志文件的最大容量（MB）
@@ -149,6 +156,19 @@ log_rotation_max_size_mb = 30
 # 日志轮转时保留的备份文件数量
 log_rotation_backup_count = 10
 ```
+
+#### 数据自动清理配置
+
+系统支持灵活的数据保留策略，可根据实际需求进行配置。
+
+**支持的时间单位**:
+
+- `minutes`: 分钟
+- `hours`: 小时  
+- `days`: 天
+- `months`: 月（按30天计算）
+
+
 
 ### Windows 路径注意事项
 
@@ -212,10 +232,12 @@ python alarm_monitor.py
     - 使用 `LEFT JOIN` 查询，将临时表中不存在于主表的新记录一次性插入主表。
     - 操作完成后立即删除临时表。
     - **优势**: 性能高，将去重逻辑完全交由数据库处理，避免了应用层的逐条比对。
+    - **劣势**：程序逻辑略复杂。
 
     
     
 2.  **备用策略 (Batch Fallback)**:
+  
     - 如果主策略因任何原因失败（如数据库权限限制），程序会自动切换到此备用策略。
     - 分批次从主表中查询已存在的记录键。
     - 在应用内存中进行比对，过滤掉重复数据。
@@ -233,6 +255,10 @@ python alarm_monitor.py
 - **可配置**: 日志级别、轮转开关、文件大小和备份数量均可在 `config.ini` 中进行配置。
 
 
+
+### 数据库与Alarm的时间：
+
+Alarm的时间来自Automation Studios(AS)，AS的时间来自另外的脚本，脚本被设置为获取部署的虚拟机的系统时间，数据库部署在虚拟机上，使用系统时间。因此两个时间是一致的，不需要进行转换。
 
 ### 数据库表结构
 
@@ -254,11 +280,10 @@ CREATE TABLE alarms (
     AdditionalInformation2 VARCHAR(255),            -- 附加信息 2
     `Change` TEXT NOT NULL,                         -- 报警状态变化
     Message TEXT NOT NULL,                          -- 报警消息文本
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- 记录入库时间，程序根据此确定是否需要进行清理
     -- 索引以加速查询和去重
     INDEX idx_time (Time),
     INDEX idx_duplicate_check (Time, Instance, Code, Name),
-    INDEX idx_cleanup (created_at)
+    INDEX idx_cleanup (Time)                        -- 基于Time字段的数据清理索引
 );
 ```
 
@@ -299,3 +324,8 @@ CREATE TABLE processing_state (
 ### 查看日志
 
 排查问题的首选方法是查看日志文件（默认为 `alarm_monitor.log`）。日志中会详细记录程序的启动、文件处理过程以及遇到的任何错误。
+
+
+
+
+

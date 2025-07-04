@@ -21,7 +21,7 @@ import logging
 import logging.handlers
 import configparser
 from datetime import datetime, timedelta
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union
 from contextlib import contextmanager
 
 # Import system recovery functionality
@@ -56,6 +56,7 @@ class AlarmMonitor:
         self.is_running = False
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 5
+        self.last_cleanup_time = datetime.now()
         
         # Initialize recovery manager
         self.recovery_manager = SystemRecoveryManager(self)
@@ -98,9 +99,6 @@ class AlarmMonitor:
         print("=====================================")
         print("Press Ctrl+C to stop monitoring")
         
-        maintenance_counter = 0
-        maintenance_interval = 100
-        
         try:
             while self.is_running:
                 # Ensure database connection is active
@@ -114,13 +112,11 @@ class AlarmMonitor:
                 # Process new files
                 files_processed = self.process_new_files()
                 
-                # Periodic maintenance
-                if files_processed:
-                    maintenance_counter += 1
-                    if maintenance_counter >= maintenance_interval:
-                        logger.debug("Performing periodic maintenance")
-                        self.recovery_manager.perform_maintenance()
-                        maintenance_counter = 0
+                # Time-based periodic maintenance
+                if self._should_perform_cleanup():
+                    logger.debug("Performing scheduled maintenance")
+                    self.recovery_manager.perform_maintenance()
+                    self.last_cleanup_time = datetime.now()
                 
                 time.sleep(polling_interval)
                 
@@ -253,8 +249,7 @@ class AlarmMonitor:
                         AdditionalInformation1 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
                         AdditionalInformation2 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
                         `Change` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
-                        Message TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        Message TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL
                     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
                 """)
                 
@@ -282,10 +277,10 @@ class AlarmMonitor:
                 cursor.execute(f"""
                     INSERT INTO {table_name} 
                     (Time, Instance, Name, Code, Severity, 
-                     AdditionalInformation1, AdditionalInformation2, `Change`, Message, created_at)
+                     AdditionalInformation1, AdditionalInformation2, `Change`, Message)
                     SELECT t.Time, t.Instance, t.Name, t.Code, t.Severity,
                            t.AdditionalInformation1, t.AdditionalInformation2, 
-                           t.`Change`, t.Message, t.created_at
+                           t.`Change`, t.Message
                     FROM {temp_table} t
                     LEFT JOIN {table_name} m ON (
                         t.Time = m.Time AND t.Instance = m.Instance 
@@ -442,7 +437,7 @@ class AlarmMonitor:
                     continue
                 
                 try:
-                    # Parse timestamp(Alarms_YYYY_MM_DD_HH_MM_SS.csv)
+                    # Parse timestamp from CSV content format: YYYY-MM-DD HH:MM:SS
                     timestamp = datetime.strptime(row[0].strip(), '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     logger.warning(f"Invalid timestamp in row: {row}")
@@ -741,7 +736,7 @@ class AlarmMonitor:
         
         config['DEFAULT'] = {
             'monitoring_dir': './alarm_files',
-            'log_file_path': './logs/alarm_monitor.log',
+            'log_file_path': './logs/',
             'file_pattern': 'Alarms_*.csv',
             'polling_interval': '10',
             'db_host': 'localhost',
@@ -753,23 +748,25 @@ class AlarmMonitor:
         }
         
         config['PERFORMANCE'] = {
-            'batch_size': '500',
+            'batch_size': '2000',
             'enable_temp_table_optimization': 'true',
             'temp_table_cleanup_interval': '3600'
         }
         
         config['DATA_MANAGEMENT'] = {
-            'data_retention_months': '12',
+            'data_retention_value': '12',
+            'data_retention_unit': 'months',
             'auto_cleanup_enabled': 'true',
-            'cleanup_check_interval': '24',
+            'cleanup_check_interval_value': '24',
+            'cleanup_check_interval_unit': 'hours',
             'max_processing_state_records': '100'
         }
         
         config['LOGGING'] = {
             'log_level': 'INFO',
             'log_rotation_enabled': 'true',
-            'log_rotation_max_size_mb': '50',
-            'log_rotation_backup_count': '7'
+            'log_rotation_max_size_mb': '30',
+            'log_rotation_backup_count': '10'
         }
         
         return config
@@ -815,19 +812,16 @@ class AlarmMonitor:
         if log_file_path is None:
             log_file_path = config.get('LOGGING', 'log_file', fallback='alarm_monitor.log')
         
-        # Handle directory path vs file path
-        if os.path.isdir(log_file_path) or (not os.path.exists(log_file_path) and not os.path.splitext(log_file_path)[1]):
-            # If it's a directory or looks like a directory (no extension), generate filename
-            log_dir = log_file_path
-            log_file_path = os.path.join(log_dir, 'alarm_monitor.log')
-        else:
-            # It's a file path, extract directory
-            log_dir = os.path.dirname(os.path.abspath(log_file_path))
+        # Generate timestamped log filename in specified directory
+        log_dir = log_file_path
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_filename = f'alarm_monitor_{timestamp}.log'
+        log_file_path = os.path.join(log_dir, log_filename)
         
-        # Read rotation settings - only support size-based rotation
+        # Read rotation settings
         rotation_enabled = config.getboolean('LOGGING', 'log_rotation_enabled', fallback=True)
-        rotation_max_size_mb = config.getint('LOGGING', 'log_rotation_max_size_mb', fallback=50)
-        rotation_backup_count = config.getint('LOGGING', 'log_rotation_backup_count', fallback=7)
+        rotation_max_size_mb = config.getint('LOGGING', 'log_rotation_max_size_mb', fallback=30)
+        rotation_backup_count = config.getint('LOGGING', 'log_rotation_backup_count', fallback=10)
         
         # Ensure log directory exists
         if log_dir and not os.path.exists(log_dir):
@@ -886,6 +880,22 @@ class AlarmMonitor:
         
         logger.info(f"Logging configured: level={log_level_name}, file={os.path.abspath(log_file_path)}, rotation={rotation_info}")
     
+    def _should_perform_cleanup(self) -> bool:
+        """Check if it's time to perform cleanup based on flexible interval configuration"""
+        try:
+            # Get cleanup interval from recovery manager
+            interval_seconds = self.recovery_manager.get_cleanup_interval_seconds()
+            
+            # Check if enough time has passed since last cleanup
+            time_since_last_cleanup = datetime.now() - self.last_cleanup_time
+            return time_since_last_cleanup.total_seconds() >= interval_seconds
+            
+        except Exception as e:
+            logger.warning(f"Error checking cleanup interval: {e}, using default")
+            # Fallback to 24 hours if configuration is invalid
+            time_since_last_cleanup = datetime.now() - self.last_cleanup_time
+            return time_since_last_cleanup.total_seconds() >= 24 * 3600
+
     def close(self) -> None:
         """Clean shutdown of monitoring system"""
         self.is_running = False
@@ -941,3 +951,4 @@ if __name__ == "__main__":
     import sys
     exit_code = main()
     sys.exit(exit_code) 
+    
